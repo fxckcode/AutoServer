@@ -115,11 +115,140 @@ configuration() {
 }
 
 # Función para el despliegue
-# deployment() {
-#   clear
-#   echo "Despliegue de los elementos"
-#   read -p "Presione Enter para volver al menú principal..."
-# }
+deployment() {
+  clear
+
+  logo
+
+  echo "Configuración de la IP estática"
+
+  read -p "Nueva IP estática: " ip_static
+  read -p "Categoría de la IP (CIDR, ej. 24): " category
+  read -p "Puerta de enlace predeterminada: " gateway 
+
+  read_netplan "$ip_static" "$category" "$gateway"
+
+  mkdir -p backup
+
+  sudo cp /etc/netplan/00-installer-config.yaml ./backup/
+
+  sudo rm -r /etc/netplan/00-installer-config.yaml
+  sudo cp ./netplan/00-installer-config.yaml /etc/netplan/
+  sudo netplan apply
+
+  clear
+
+  logo
+
+  read -p "Configuración aplicada, presione Enter para continuar..."
+
+  clear
+
+  logo
+
+  echo "Montaje de los proyectos"
+
+  read -p "Ruta absoluta del backend: " backend
+  read -p "Ruta absoluta del frontend: " frontend
+
+  install_projects "$backend" "$frontend"
+
+  clear
+
+  logo
+
+  echo
+  read -p "Presione Enter para volver al menú principal..."
+}
+
+# Función para leer y generar el archivo de configuración de netplan
+read_netplan() {
+  local ip_static=$1
+  local category=$2
+  local gateway=$3
+
+  mkdir -p netplan  # -p crea el directorio solo si no existe
+
+  cat <<EOL > ./netplan/00-installer-config.yaml
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp0s3:
+      dhcp4: no
+      addresses: [$ip_static/$category]
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+      routes:
+        - to: default
+          via: $gateway
+  version: 2
+EOL
+
+  echo "Configuración generada con éxito"
+  echo 
+  echo "Resumen: "
+  echo "  IP: $ip_static"
+  echo "  Categoria (CIDR): $category"
+  echo "  Puerta de enlace: $gateway"
+  echo
+}
+
+install_projects() {
+  local backend=$1
+  local frontend=$2
+
+  if [ -d "$backend" -a -d "$frontend" ]; then
+    if [ -d "$backend/node_modules" ]; then
+      sudo rm -r "$backend/node_modules"
+    fi
+
+    if [ -d "$frontend/node_modules" ]; then
+      sudo rm -r "$frontend/node_modules"
+    fi
+
+    cd "$backend"
+    npm install
+
+    clear
+
+    logo
+
+    read -p "Con que comando arranca el backend [npm run ...]: " run_backend
+    read -p "En que puerto corre el backend (Ej. 3000): " port_backend
+
+    sudo ufw allow "$port_backend/tcp"
+    sudo ufw allow "$port_backend"
+
+    pm2 delete "backend"
+    pm2 start npm --name "backend" -- run "$run_backend"
+
+    cd "$frontend"
+    npm install
+
+    read -p "Con que comando arranca el frontend [npm run ...]: " run_frontend
+    read -p "En que puerto corre el frontend (Ej. 3000): " port_frontend 
+
+    sudo ufw allow "$port_frontend/tcp"
+    sudo ufw allow "$port_frontend"
+
+    pm2 delete "frontend"
+    pm2 start npm --name "frontend" -- run "$run_frontend"
+
+    clear
+
+    logo 
+    
+    pm2 list
+    
+    pm2 save
+
+    read -p "Operación correctamente realizada"
+
+  else
+    echo "Directorios invalido"
+  fi
+}
 
 reboot() {
   echo "Reiniciando..."
@@ -132,8 +261,9 @@ while true; do
   logo
   echo "1 - Instalar las dependencias"
   echo "2 - Configuración básica de los elementos"
-  echo "3 - Reinicar servidor"
-  echo "4 - Salir"
+  echo "3 - Despliegue"
+  echo "4 - Reinicar servidor"
+  echo "5 - Salir"
 
   read -p "Seleccione una opción: " option
 
@@ -145,9 +275,12 @@ while true; do
       configuration
       ;;
     3)
-      reboot
+      deployment
       ;;
     4)
+      reboot
+      ;;
+    5)
       echo "Saliendo del script..."
       exit 0
       ;;
